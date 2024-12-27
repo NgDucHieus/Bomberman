@@ -37,6 +37,34 @@ bool isMoving = false; // trạng thái di chuyển cho nhân vật 1
 bool isMoving2 = false; // trạng thái di chuyển cho nhân vật 2
 
 
+// void generateRandomMap(std::vector<std::vector<int>>& map) {
+//     // Initialize the map with 1s (walkable paths)
+//     for (int i = 0; i < MAP_WIDTH; ++i) {
+//         for (int j = 0; j < MAP_WIDTH; ++j) {
+//             map[i][j] = 1; // Set all to walkable
+//         }
+//     }
+
+//     // Randomly set some cells to 0 (obstacles)
+//     int numberOfObstacles = (MAP_WIDTH * MAP_WIDTH) / 4; // Set 25% of the cells as obstacles
+
+//     srand(static_cast<unsigned int>(time(0))); // Seed for random number generation
+
+//     for (int i = 0; i < numberOfObstacles; ++i) {
+//         int x = rand() % MAP_WIDTH; // Random x coordinate
+//         int y = rand() % MAP_WIDTH; // Random y coordinate
+
+//         // Ensure that we don't overwrite an existing obstacle
+//         while (map[y][x] == 0) {
+//             x = rand() % MAP_WIDTH;
+//             y = rand() % MAP_WIDTH;
+//         }
+
+//         map[y][x] = 0; // Set the cell to 0 (obstacle)
+//     }
+// }
+
+
 void generateRandomMap(std::vector<std::vector<int>>& map) {
     // Initialize the map with 1s (walkable paths)
     for (int i = 0; i < MAP_WIDTH; ++i) {
@@ -44,6 +72,14 @@ void generateRandomMap(std::vector<std::vector<int>>& map) {
             map[i][j] = 1; // Set all to walkable
         }
     }
+
+    map[1][1] = 1; // Player 1 starting position
+    map[MAP_HEIGHT - 2][MAP_WIDTH - 2] = 1; // Player 2 starting position
+
+    // Ensure bottom-right corner area remains walkable
+    map[MAP_HEIGHT - 2][MAP_WIDTH - 3] = 1;
+    map[MAP_HEIGHT - 3][MAP_WIDTH - 2] = 1;
+    map[MAP_HEIGHT - 3][MAP_WIDTH - 3] = 1;
 
     // Randomly set some cells to 0 (obstacles)
     int numberOfObstacles = (MAP_WIDTH * MAP_WIDTH) / 4; // Set 25% of the cells as obstacles
@@ -63,6 +99,7 @@ void generateRandomMap(std::vector<std::vector<int>>& map) {
         map[y][x] = 0; // Set the cell to 0 (obstacle)
     }
 }
+
 
 
 std::vector<std::vector<int>> map(MAP_WIDTH, std::vector<int>(MAP_WIDTH));
@@ -488,6 +525,78 @@ bool isPlayerNear(int botX, int botY, int playerX, int playerY, int range = 1) {
 }
 
 
+#include <queue>
+#include <unordered_map>
+
+// A* Node structure
+struct Node {
+    int x, y;
+    int cost, heuristic;
+    Node* parent;
+
+    Node(int x, int y, int cost, int heuristic, Node* parent)
+        : x(x), y(y), cost(cost), heuristic(heuristic), parent(parent) {}
+
+    // Priority queue comparator
+    bool operator<(const Node& other) const {
+        return (cost + heuristic) > (other.cost + other.heuristic);
+    }
+};
+
+// Heuristic function (Manhattan Distance)
+int heuristic(int x1, int y1, int x2, int y2) {
+    return abs(x1 - x2) + abs(y1 - y2);
+}
+
+// Pathfinding function
+std::vector<std::pair<int, int>> findPath(int startX, int startY, int targetX, int targetY) {
+    std::priority_queue<Node> openList;
+    std::unordered_map<int, bool> closedList;
+    
+    openList.emplace(startX, startY, 0, heuristic(startX, startY, targetX, targetY), nullptr);
+
+    while (!openList.empty()) {
+        Node current = openList.top();
+        openList.pop();
+
+        if (current.x == targetX && current.y == targetY) {
+            // Reconstruct path
+            std::vector<std::pair<int, int>> path;
+            for (Node* node = &current; node != nullptr; node = node->parent) {
+                path.emplace_back(node->x, node->y);
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        // Add current node to closed list
+        int hash = current.y * MAP_WIDTH + current.x;
+        closedList[hash] = true;
+
+        // Check neighbors
+        std::vector<std::pair<int, int>> neighbors = {
+            {current.x, current.y - 1},
+            {current.x, current.y + 1},
+            {current.x - 1, current.y},
+            {current.x + 1, current.y}};
+
+        for (const auto& [nx, ny] : neighbors) {
+            if (nx >= 0 && ny >= 0 && nx < MAP_WIDTH && ny < MAP_HEIGHT && map[ny][nx] == 1) {
+                int neighborHash = ny * MAP_WIDTH + nx;
+                if (closedList.find(neighborHash) == closedList.end()) {
+                    openList.emplace(nx, ny, current.cost + 1,
+                                     heuristic(nx, ny, targetX, targetY),
+                                     new Node(current));
+                }
+            }
+        }
+    }
+
+    // Return empty path if no path found
+    return {};
+}
+
+// Updated aiBotLogic
 void aiBotLogic() {
     // Lấy thời gian hiện tại
     Uint32 currentTime = SDL_GetTicks();
@@ -500,66 +609,33 @@ void aiBotLogic() {
     // Cập nhật thời gian cho lần tiếp theo
     lastBotUpdateTime = currentTime;
 
-    // Nếu bot gần người chơi, đặt bom tại vị trí trước đó
-    if (isPlayerNear(aiBot.x, aiBot.y, player2X, player2Y)) {
-        placeBomb(aiBot.lastX, aiBot.lastY); // Đặt bom ở vị trí trước đó
-        return; // Không di chuyển trong lượt này
-    }
+    // Tìm đường đến người chơi
+    std::vector<std::pair<int, int>> path = findPath(aiBot.x, aiBot.y, player2X, player2Y);
 
-    // Lưu vị trí hiện tại trước khi di chuyển
-    aiBot.lastX = aiBot.x;
-    aiBot.lastY = aiBot.y;
+    if (!path.empty() && path.size() > 1) {
+        // Di chuyển đến ô tiếp theo trên đường
+        int nextX = path[1].first;
+        int nextY = path[1].second;
 
-    // Các hướng di chuyển khả dụng
-    Direction possibleDirections[4] = {UP, DOWN, LEFT, RIGHT};
-    shuffleDirections(possibleDirections, 4); // Trộn ngẫu nhiên các hướng
+        aiBot.lastX = aiBot.x;
+        aiBot.lastY = aiBot.y;
+        aiBot.x = nextX;
+        aiBot.y = nextY;
 
-    // Duyệt qua các hướng để tìm vị trí mới
-    for (Direction dir : possibleDirections) {
-        int newX = aiBot.x, newY = aiBot.y;
-        switch (dir) {
-            case UP:    newY--; break;
-            case DOWN:  newY++; break;
-            case LEFT:  newX--; break;
-            case RIGHT: newX++; break;
-        }
+        // Đặt hướng di chuyển
+        if (nextX > aiBot.lastX) aiBot.direction = RIGHT;
+        else if (nextX < aiBot.lastX) aiBot.direction = LEFT;
+        else if (nextY > aiBot.lastY) aiBot.direction = DOWN;
+        else if (nextY < aiBot.lastY) aiBot.direction = UP;
 
-        // Kiểm tra nếu vị trí chưa được ghé qua và có thể đi được
-        if (isWalkable(newX, newY) && visitedPositions.find({newX, newY}) == visitedPositions.end()) {
-            aiBot.x = newX;
-            aiBot.y = newY;
-            aiBot.direction = dir;
-            aiBot.isMoving = true;
-
-            // Lưu vị trí vào lịch sử
-            visitedPositions.insert({newX, newY});
-            return; // Kết thúc di chuyển
+        aiBot.isMoving = true;
+    } else {
+        // Nếu bot gần người chơi, đặt bom tại vị trí trước đó
+        if (isPlayerNear(aiBot.x, aiBot.y, player2X, player2Y)) {
+            placeBomb(aiBot.lastX, aiBot.lastY); // Đặt bom ở vị trí trước đó
         }
     }
-
-    // Nếu không có vị trí mới, bot có thể quay lại một vị trí cũ
-    for (Direction dir : possibleDirections) {
-        int newX = aiBot.x, newY = aiBot.y;
-        switch (dir) {
-            case UP:    newY--; break;
-            case DOWN:  newY++; break;
-            case LEFT:  newX--; break;
-            case RIGHT: newX++; break;
-        }
-
-        if (isWalkable(newX, newY)) { // Di chuyển đến vị trí cũ nếu không còn lựa chọn
-            aiBot.x = newX;
-            aiBot.y = newY;
-            aiBot.direction = dir;
-            aiBot.isMoving = true;
-            return; // Kết thúc di chuyển
-        }
-    }
-
-    // Nếu không di chuyển được, bot đứng yên
-    aiBot.isMoving = false;
 }
-
 
 
 
