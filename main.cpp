@@ -6,6 +6,11 @@
 #include <thread>
 #include <algorithm>
 #include <SDL2/SDL_ttf.h>
+#include <cstdlib> // For rand()
+#include <ctime>   // For seeding with time()
+#include <set> // Để sử dụng std::set cho lịch sử vị trí
+
+std::set<std::pair<int, int>> visitedPositions; // Lưu các vị trí đã đi qua
 
 
 
@@ -32,24 +37,6 @@ bool isMoving = false; // trạng thái di chuyển cho nhân vật 1
 bool isMoving2 = false; // trạng thái di chuyển cho nhân vật 2
 
 
-
-// // Ma trận bản đồ
-// std::vector<std::vector<int>> map = {
-//     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-//     {1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
-//     {1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1},
-//     {1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
-//     {1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1},
-//     {1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1},
-//     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-//     {1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
-//     {1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1},
-//     {1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
-//     {1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1},
-//     {1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
-//     {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-// };
-// Function to generate a random map
 void generateRandomMap(std::vector<std::vector<int>>& map) {
     // Initialize the map with 1s (walkable paths)
     for (int i = 0; i < MAP_WIDTH; ++i) {
@@ -225,39 +212,39 @@ void destroyTextures(SDL_Texture* textures[4][2]) {
 }
 
 
-void renderMenu(SDL_Renderer* renderer, TTF_Font* font) {
-    // Clear the screen
+void renderMenu(SDL_Renderer* renderer, TTF_Font* font, SDL_Rect& botRect, SDL_Rect& humanRect) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    // Render "Start Game" text
     SDL_Color white = {255, 255, 255};
-    SDL_Surface* startSurface = TTF_RenderText_Solid(font, "Start Game", white);
-    SDL_Texture* startTexture = SDL_CreateTextureFromSurface(renderer, startSurface);
-    int startWidth = startSurface->w;
-    int startHeight = startSurface->h;
-    SDL_FreeSurface(startSurface);
 
-    SDL_Rect startRect = {(MAP_WIDTH * block_size - startWidth) / 2, MAP_HEIGHT * block_size / 3, startWidth, startHeight};
-    SDL_RenderCopy(renderer, startTexture, NULL, &startRect);
+    // Option 1: Play with Bot
+    SDL_Surface* botSurface = TTF_RenderText_Solid(font, "Play with Bot", white);
+    SDL_Texture* botTexture = SDL_CreateTextureFromSurface(renderer, botSurface);
+    int botWidth = botSurface->w;
+    int botHeight = botSurface->h;
+    SDL_FreeSurface(botSurface);
 
-    // Render "Quit" text
-    SDL_Surface* quitSurface = TTF_RenderText_Solid(font, "Quit", white);
-    SDL_Texture* quitTexture = SDL_CreateTextureFromSurface(renderer, quitSurface);
-    int quitWidth = quitSurface->w;
-    int quitHeight = quitSurface->h;
-    SDL_FreeSurface(quitSurface);
+    botRect = { (MAP_WIDTH * block_size - botWidth) / 2, MAP_HEIGHT * block_size / 4, botWidth, botHeight };
+    SDL_RenderCopy(renderer, botTexture, NULL, &botRect);
 
-    SDL_Rect quitRect = {(MAP_WIDTH * block_size - quitWidth) / 2, MAP_HEIGHT * block_size / 2, quitWidth, quitHeight};
-    SDL_RenderCopy(renderer, quitTexture, NULL, &quitRect);
+    // Option 2: Play with Human
+    SDL_Surface* humanSurface = TTF_RenderText_Solid(font, "Play with Human", white);
+    SDL_Texture* humanTexture = SDL_CreateTextureFromSurface(renderer, humanSurface);
+    int humanWidth = humanSurface->w;
+    int humanHeight = humanSurface->h;
+    SDL_FreeSurface(humanSurface);
+
+    humanRect = { (MAP_WIDTH * block_size - humanWidth) / 2, MAP_HEIGHT * block_size / 2, humanWidth, humanHeight };
+    SDL_RenderCopy(renderer, humanTexture, NULL, &humanRect);
 
     // Present the menu
     SDL_RenderPresent(renderer);
 
-    // Clean up
-    SDL_DestroyTexture(startTexture);
-    SDL_DestroyTexture(quitTexture);
+    SDL_DestroyTexture(botTexture);
+    SDL_DestroyTexture(humanTexture);
 }
+
 // Nổ bom
 void explodeBomb(int x, int y, SDL_Texture* explosionTexture, SDL_Renderer* renderer) {
     // Danh sách các vị trí bị ảnh hưởng bởi vụ nổ
@@ -465,32 +452,129 @@ struct Player {
     bool isMoving;
 };
 
+const int BOT_UPDATE_INTERVAL = 500; // Bot updates every 200ms
+Uint32 lastBotUpdateTime = 0;        // Time of the last bot update
 
-void handlePlayerMovement(Player& player, SDL_Keycode key, bool isKeyDown) {
-    int newX = player.x, newY = player.y;
 
-    if (isKeyDown) {
-        switch (key) {
-            case SDLK_w: case SDLK_UP:    newY--; player.direction = UP; break;
-            case SDLK_s: case SDLK_DOWN:  newY++; player.direction = DOWN; break;
-            case SDLK_a: case SDLK_LEFT:  newX--; player.direction = LEFT; break;
-            case SDLK_d: case SDLK_RIGHT: newX++; player.direction = RIGHT; break;
+struct Bot {
+    int x, y;           // Current position
+    int lastX, lastY;   // Previous position
+    Direction direction;
+    bool isMoving;
+    bool isDead;
+
+    // Constructor to initialize all fields
+    Bot(int startX, int startY, Direction startDirection, bool startMoving, bool startDead)
+        : x(startX), y(startY), lastX(startX), lastY(startY),
+          direction(startDirection), isMoving(startMoving), isDead(startDead) {}
+};
+
+
+
+bool isWalkable(int x, int y) {
+    return x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT && map[y][x] == 1;
+}
+
+Bot aiBot = {6, 6, DOWN, false, false}; // Initialize bot at position (6, 6)
+
+void shuffleDirections(Direction directions[], int size) {
+    for (int i = size - 1; i > 0; --i) {
+        int j = rand() % (i + 1); // Random index from 0 to i
+        std::swap(directions[i], directions[j]);
+    }
+}
+bool isPlayerNear(int botX, int botY, int playerX, int playerY, int range = 1) {
+    return (std::abs(botX - playerX) + std::abs(botY - playerY)) <= range;
+}
+
+
+void aiBotLogic() {
+    // Lấy thời gian hiện tại
+    Uint32 currentTime = SDL_GetTicks();
+
+    // Chỉ cập nhật bot nếu đủ thời gian từ lần cập nhật trước
+    if (currentTime - lastBotUpdateTime < BOT_UPDATE_INTERVAL) {
+        return; // Bỏ qua lần cập nhật này
+    }
+
+    // Cập nhật thời gian cho lần tiếp theo
+    lastBotUpdateTime = currentTime;
+
+    // Nếu bot gần người chơi, đặt bom tại vị trí trước đó
+    if (isPlayerNear(aiBot.x, aiBot.y, player2X, player2Y)) {
+        placeBomb(aiBot.lastX, aiBot.lastY); // Đặt bom ở vị trí trước đó
+        return; // Không di chuyển trong lượt này
+    }
+
+    // Lưu vị trí hiện tại trước khi di chuyển
+    aiBot.lastX = aiBot.x;
+    aiBot.lastY = aiBot.y;
+
+    // Các hướng di chuyển khả dụng
+    Direction possibleDirections[4] = {UP, DOWN, LEFT, RIGHT};
+    shuffleDirections(possibleDirections, 4); // Trộn ngẫu nhiên các hướng
+
+    // Duyệt qua các hướng để tìm vị trí mới
+    for (Direction dir : possibleDirections) {
+        int newX = aiBot.x, newY = aiBot.y;
+        switch (dir) {
+            case UP:    newY--; break;
+            case DOWN:  newY++; break;
+            case LEFT:  newX--; break;
+            case RIGHT: newX++; break;
         }
-        player.isMoving = true;
-    } else {
-        player.isMoving = false;
+
+        // Kiểm tra nếu vị trí chưa được ghé qua và có thể đi được
+        if (isWalkable(newX, newY) && visitedPositions.find({newX, newY}) == visitedPositions.end()) {
+            aiBot.x = newX;
+            aiBot.y = newY;
+            aiBot.direction = dir;
+            aiBot.isMoving = true;
+
+            // Lưu vị trí vào lịch sử
+            visitedPositions.insert({newX, newY});
+            return; // Kết thúc di chuyển
+        }
     }
 
-    if (canMove(newX, newY)) {
-        player.x = newX;
-        player.y = newY;
+    // Nếu không có vị trí mới, bot có thể quay lại một vị trí cũ
+    for (Direction dir : possibleDirections) {
+        int newX = aiBot.x, newY = aiBot.y;
+        switch (dir) {
+            case UP:    newY--; break;
+            case DOWN:  newY++; break;
+            case LEFT:  newX--; break;
+            case RIGHT: newX++; break;
+        }
+
+        if (isWalkable(newX, newY)) { // Di chuyển đến vị trí cũ nếu không còn lựa chọn
+            aiBot.x = newX;
+            aiBot.y = newY;
+            aiBot.direction = dir;
+            aiBot.isMoving = true;
+            return; // Kết thúc di chuyển
+        }
     }
+
+    // Nếu không di chuyển được, bot đứng yên
+    aiBot.isMoving = false;
 }
 
 
 
 
+enum GameMode {
+    WITH_BOT,
+    WITH_HUMAN
+};
+
+GameMode currentGameMode = WITH_BOT; // Default mode
+
 int main(int argc, char* argv[]) {
+    SDL_Rect botRect, humanRect;
+
+    srand(static_cast<unsigned int>(time(0))); // Seed random generator
+
     // Initialize SDL map
     generateRandomMap(map);
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -505,9 +589,6 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-
-
-
     SDL_DisplayMode win_size;
     SDL_GetCurrentDisplayMode(0, &win_size);
     int win_height = win_size.h;
@@ -521,18 +602,18 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Surface* iconSurface = IMG_Load("./materials/icon.png");
-    if (iconSurface == NULL) {
+    if (!iconSurface) {
         std::cerr << "Load icon failed! SDL_Error: " << SDL_GetError() << std::endl;
         SDL_DestroyWindow(window);
         SDL_Quit();
         return -1;
     }
 
-
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_SetWindowIcon(window, iconSurface);
     SDL_FreeSurface(iconSurface);
-    // load material
+
+    // Load textures and materials
     SDL_Texture* playerTextures[4][2];
     SDL_Texture* player2Textures[4][2];
     SDL_Texture* solidTexture = loadAndCheckTexture("./materials/solid.bmp", renderer);
@@ -541,7 +622,6 @@ int main(int argc, char* argv[]) {
     SDL_Texture* explosionTexture = loadAndCheckTexture("./materials/explosion.bmp", renderer);
     loadPlayerTextures(playerTextures, "./materials/player", renderer);
     loadPlayerTextures(player2Textures, "./materials/player2", renderer);
-    //
 
     if (!solidTexture || !stoneTexture || !bombTexture || !explosionTexture) {
         std::cerr << "Error loading textures" << std::endl;
@@ -555,6 +635,7 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // Initialize game state and variables
     GameState gameState = MENU;
     bool running = true;
     SDL_Event event;
@@ -568,6 +649,7 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // Main game loop
     while (running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -575,47 +657,36 @@ int main(int argc, char* argv[]) {
             }
 
             if (gameState == MENU) {
-                if (event.type == SDL_KEYDOWN) {
-                    if (event.key.keysym.sym == SDLK_RETURN) {
+                // Handle mouse clicks for menu options
+                if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                    int mouseX = event.button.x;
+                    int mouseY = event.button.y;
+
+                    if (mouseX >= botRect.x && mouseX <= botRect.x + botRect.w &&
+                        mouseY >= botRect.y && mouseY <= botRect.y + botRect.h) {
+                        currentGameMode = WITH_BOT;
                         gameState = GAME;
-                    } else if (event.key.keysym.sym == SDLK_ESCAPE) {
-                        running = false;
+                    } else if (mouseX >= humanRect.x && mouseX <= humanRect.x + humanRect.w &&
+                               mouseY >= humanRect.y && mouseY <= humanRect.y + humanRect.h) {
+                        currentGameMode = WITH_HUMAN;
+                        gameState = GAME;
                     }
                 }
             } else if (gameState == GAME) {
                 if (event.type == SDL_KEYDOWN) {
-                    int newX = playerX;
-                    int newY = playerY;
                     int newX2 = player2X;
                     int newY2 = player2Y;
-
-                    switch (event.key.keysym.sym) {
-                        case SDLK_w:    newY--; playerDirection = UP; isMoving = true; break;
-                        case SDLK_s:    newY++; playerDirection = DOWN; isMoving = true; break;
-                        case SDLK_a:    newX--; playerDirection = LEFT; isMoving = true; break;
-                        case SDLK_d:    newX++; playerDirection = RIGHT; isMoving = true; break;
-                        case SDLK_SPACE:
-                            if (!isPlayer1Dead && !isPlayer2Dead) {
-                                placeBomb(playerX, playerY);
-                            }
-                            break;
-                    }
 
                     switch (event.key.keysym.sym) {
                         case SDLK_UP:    newY2--; player2Direction = UP; isMoving2 = true; break;
                         case SDLK_DOWN:  newY2++; player2Direction = DOWN; isMoving2 = true; break;
                         case SDLK_LEFT:  newX2--; player2Direction = LEFT; isMoving2 = true; break;
                         case SDLK_RIGHT: newX2++; player2Direction = RIGHT; isMoving2 = true; break;
-                        case SDLK_KP_ENTER:
-                            if (!isPlayer2Dead && !isPlayer1Dead) {
+                        case 109:
+                            if (!isPlayer2Dead) {
                                 placeBomb(player2X, player2Y);
                             }
                             break;
-                    }
-
-                    if (canMove(newX, newY)) {
-                        playerX = newX;
-                        playerY = newY;
                     }
 
                     if (canMove(newX2, newY2)) {
@@ -623,11 +694,7 @@ int main(int argc, char* argv[]) {
                         player2Y = newY2;
                     }
                 } else if (event.type == SDL_KEYUP) {
-                    if (event.key.keysym.sym == SDLK_w || event.key.keysym.sym == SDLK_s || 
-                        event.key.keysym.sym == SDLK_a || event.key.keysym.sym == SDLK_d) {
-                        isMoving = false;
-                    }
-                    if (event.key.keysym.sym == SDLK_UP || event.key.keysym.sym == SDLK_DOWN || 
+                    if (event.key.keysym.sym == SDLK_UP || event.key.keysym.sym == SDLK_DOWN ||
                         event.key.keysym.sym == SDLK_LEFT || event.key.keysym.sym == SDLK_RIGHT) {
                         isMoving2 = false;
                     }
@@ -635,35 +702,23 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        if (gameState == GAME) {
+            aiBotLogic();
+            // placeBomb(aiBot.x, aiBot.y);
+
+        }
+
+        // Rendering
         if (gameState == MENU) {
-            renderMenu(renderer, font);
+            renderMenu(renderer, font, botRect, humanRect);
         } else if (gameState == GAME) {
-            if (isMoving) {
-                animationTimer += 0.016f;
-                if (animationTimer >= ANIMATION_DELAY) {
-                    playerFrame = (playerFrame + 1) % 2;
-                    animationTimer = 0.0f;
-                }
-            } else {
-                playerFrame = 0;
-            }
-
-            if (isMoving2) {
-                animationTimer += 0.016f;
-                if (animationTimer >= ANIMATION_DELAY) {
-                    player2Frame = (player2Frame + 1) % 2;
-                    animationTimer = 0.0f;
-                }
-            } else {
-                player2Frame = 0;
-            }
-
-            updateBombs(renderer, explosionTexture);
+            updateBombs(renderer, explosionTexture); // Cập nhật trạng thái bom
 
             SDL_RenderClear(renderer);
             renderMap(renderer, solidTexture, stoneTexture);
-            if (!isPlayer1Dead) {
-                renderPlayer(renderer, playerTextures, playerX, playerY, playerDirection, playerFrame);
+
+            if (!aiBot.isDead) {
+                renderPlayer(renderer, playerTextures, aiBot.x, aiBot.y, aiBot.direction, playerFrame);
             }
             if (!isPlayer2Dead) {
                 renderPlayer(renderer, player2Textures, player2X, player2Y, player2Direction, player2Frame);
@@ -671,30 +726,11 @@ int main(int argc, char* argv[]) {
             renderBombs(renderer, bombTexture);
             renderExplosions(renderer, explosionTexture);
 
-            if (bothDead) {
-                int textWidth, textHeight;
-                TTF_SizeText(font, "Both players are dead!", &textWidth, &textHeight);
-                int centerX = (MAP_WIDTH * block_size - textWidth) / 2;
-                int centerY = (MAP_HEIGHT * block_size - textHeight) / 2;
-                renderText(renderer, "Both players are dead!", centerX, centerY);
-            } else if (isPlayer1Dead && !isPlayer2Dead) {
-                int textWidth, textHeight;
-                TTF_SizeText(font, "Player 1 is dead!", &textWidth, &textHeight);
-                int centerX = (MAP_WIDTH * block_size - textWidth) / 2;
-                int centerY = (MAP_HEIGHT * block_size - textHeight) / 2;
-                renderText(renderer, "Player 1 is dead!", centerX, centerY);
-            } else if (isPlayer2Dead && !isPlayer1Dead) {
-                int textWidth, textHeight;
-                TTF_SizeText(font, "Player 2 is dead!", &textWidth, &textHeight);
-                int centerX = (MAP_WIDTH * block_size - textWidth) / 2;
-                int centerY = (MAP_HEIGHT * block_size - textHeight) / 2;
-                renderText(renderer, "Player 2 is dead!", centerX, centerY);
-            }
-
             SDL_RenderPresent(renderer);
         }
     }
 
+    // Cleanup
     TTF_CloseFont(font);
     SDL_DestroyTexture(solidTexture);
     SDL_DestroyTexture(stoneTexture);
